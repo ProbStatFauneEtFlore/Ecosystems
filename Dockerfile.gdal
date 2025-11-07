@@ -1,0 +1,12 @@
+# Étendre l’image GDAL officielle
+FROM ghcr.io/osgeo/gdal:ubuntu-small-latest
+
+# Installer Python packages
+RUN apt-get update && apt-get install -y python3-pip \
+ && apt-get install -y aria2 \
+ && pip install --upgrade pip \
+ && pip install pandas numpy scikit-learn shapely \
+ && rm -rf /var/lib/apt/lists/*
+
+# (optionnel) répertoire de travail
+WORKDIR /data
