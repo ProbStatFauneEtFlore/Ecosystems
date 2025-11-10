@@ -2,14 +2,14 @@
 FROM ghcr.io/osgeo/gdal:ubuntu-small-latest
 
 # On installe ce qu'il faut pour pouvoir créer un venv
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        python3-venv python3-pip python3-dev \
-        build-essential \
-        libgeos-dev \
-        libproj-dev \
-        aria2 \
-        libspatialindex-dev && \
+RUN apt-get update &&                           \
+    apt-get install -y --no-install-recommends  \
+        python3-venv python3-pip python3-dev    \
+        build-essential                         \
+        libgeos-dev                             \
+        libproj-dev                             \
+        aria2                                   \
+        libspatialindex-dev                     && \
     rm -rf /var/lib/apt/lists/*
 
 # On crée un venv "propre" à l'intérieur de l'image
@@ -17,13 +17,13 @@ RUN python3 -m venv /opt/venv
 
 # On installe les paquets nécessaires dans CE venv,
 # pas dans le Python système (donc pas de PEP 668 qui râle)
-RUN /opt/venv/bin/pip install --upgrade pip && \
-    /opt/venv/bin/pip install \
-        numpy \
-        pandas \
-        shapely \
-        scikit-learn \
-        alphashape \
+RUN /opt/venv/bin/pip install --upgrade pip &&  \
+    /opt/venv/bin/pip install                   \
+        numpy                                   \
+        pandas                                  \
+        shapely                                 \
+        scikit-learn                            \
+        alphashape                              \
         gdal
 
 # Pour que tous les `python` / `pip` utilisent le venv par défaut
