@@ -81,7 +81,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", required=True)
     ap.add_argument("--out", dest="out", required=True)
-    ap.add_argument("--tif-dir", dest="tif_dir", default="/data/swissALTI3D_tuiles")
+    ap.add_argument("--tif-dir", dest="tif_dir", default="../data/swissALTI3D_tuiles")
     ap.add_argument("--lon-field", dest="lon_field")
     ap.add_argument("--lat-field", dest="lat_field")
     ap.add_argument("--workers", type=int, default=0, help="nb de processus (0 = nb CPU)")

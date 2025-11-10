@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Écosystèmes faune/flore</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100%; }
+    .info-panel {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: rgba(255,255,255,0.93);
+      padding: 10px 14px;
+      border-radius: 6px;
+      max-height: 65vh;
+      overflow-y: auto;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      width: 270px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    .info-panel h2 { margin: 0 0 6px 0; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="info-panel" id="info">
+    <h2>Écosystèmes</h2>
+    <p>Passe la souris sur un polygone pour voir les taxons.</p>
+  </div>
+
+  <script>
+    // tes fichiers EXACTS
+    const GEOJSON_URL = 'data/ecosystemes_4326.geojson';
+    const OBS_CSV_URL = 'data/observations_with_clusters.csv';
+
+    const map = L.map('map').setView([46.8, 8.2], 8);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19
+    }).addTo(map);
+
+    const infoEl = document.getElementById("info");
+    const taxonsByCluster = {};
+
+    function setInfo(clusterId, counts) {
+      if (!clusterId) {
+        infoEl.innerHTML = "<h2>Écosystèmes</h2><p>Passe la souris sur un polygone pour voir les taxons.</p>";
+        return;
+      }
+      let html = `<h2>Cluster ${clusterId}</h2>`;
+      if (!counts || Object.keys(counts).length === 0) {
+        html += "<p>Aucun taxon trouvé pour ce cluster.</p>";
+      } else {
+        html += "<p><strong>Taxons observés :</strong></p><ol>";
+        Object.entries(counts).sort((a,b)=>b[1]-a[1]).forEach(([taxon, count]) => {
+          html += `<li>${taxon} : ${count}</li>`;
+        });
+        html += "</ol>";
+      }
+      infoEl.innerHTML = html;
+    }
+
+    // 1) lire le CSV
+    Papa.parse(OBS_CSV_URL, {
+      download: true,
+      header: true,
+      dynamicTyping: true,
+      complete: function(results) {
+        results.data.forEach(row => {
+          const cid = row['cluster_id'];
+          const taxon = row['taxon_id'];
+          if (cid === undefined || cid === null || cid === -1) return;
+          if (!taxonsByCluster[cid]) taxonsByCluster[cid] = {};
+          const key = taxon ? taxon : "inconnu";
+          taxonsByCluster[cid][key] = (taxonsByCluster[cid][key] || 0) + 1;
+        });
+        // ensuite on charge le geojson
+        loadGeojson();
+      }
+    });
+
+    // 2) lire le geojson
+    function loadGeojson() {
+      fetch(GEOJSON_URL)
+        .then(r => r.json())
+        .then(data => {
+          const layer = L.geoJSON(data, {
+            style: f => {
+              const cid = f.properties.cluster_id;
+              const hue = (cid * 1337) % 360;
+              return {
+                color: `hsl(${hue}, 70%, 35%)`,
+                weight: 1,
+                fillColor: `hsl(${hue}, 80%, 65%)`,
+                fillOpacity: 0.4
+              };
+            },
+            onEachFeature: function(feature, layer) {
+              const cid = feature.properties.cluster_id;
+              layer.on('mouseover', function() {
+                setInfo(cid, taxonsByCluster[cid]);
+                layer.setStyle({weight: 3});
+              });
+              layer.on('mouseout', function() {
+                setInfo(null);
+                layer.setStyle({weight: 1});
+              });
+            }
+          }).addTo(map);
+
+          // zoom sur tout
+          map.fitBounds(layer.getBounds());
+        });
+    }
+  </script>
+</body>
+</html>

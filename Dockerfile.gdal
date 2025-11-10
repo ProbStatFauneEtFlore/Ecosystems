@@ -1,12 +1,37 @@
-# Étendre l’image GDAL officielle
+# Base: même image que tu utilises déjà
 FROM ghcr.io/osgeo/gdal:ubuntu-small-latest
 
-# Installer Python packages
-RUN apt-get update && apt-get install -y python3-pip \
- && apt-get install -y aria2 \
- && pip install --upgrade pip \
- && pip install pandas numpy scikit-learn shapely \
- && rm -rf /var/lib/apt/lists/*
+# On installe ce qu'il faut pour pouvoir créer un venv
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3-venv python3-pip python3-dev \
+        build-essential \
+        libgeos-dev \
+        libproj-dev \
+        aria2 \
+        libspatialindex-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-# (optionnel) répertoire de travail
-WORKDIR /data
+# On crée un venv "propre" à l'intérieur de l'image
+RUN python3 -m venv /opt/venv
+
+# On installe les paquets nécessaires dans CE venv,
+# pas dans le Python système (donc pas de PEP 668 qui râle)
+RUN /opt/venv/bin/pip install --upgrade pip && \
+    /opt/venv/bin/pip install \
+        numpy \
+        pandas \
+        shapely \
+        scikit-learn \
+        alphashape \
+        gdal
+
+# Pour que tous les `python` / `pip` utilisent le venv par défaut
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Dossier de travail avec tes données montées
+WORKDIR /app
+
+# On garde le conteneur vivant (comme tu faisais)
+ENTRYPOINT ["/bin/bash", "-lc", "sleep infinity"]

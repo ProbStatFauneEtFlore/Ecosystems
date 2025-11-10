@@ -208,4 +208,8 @@ __marimo__/
 
 
 # User-specific
-data/swissALTI3D_tuiles/
+app/data/swissALTI3D_tuiles/
+*.geojson
+app/data/observations_with_clusters.csv
+app/data/observations_with_elevation.csv
+app/data/swissalti3d_urls_filtered.txt

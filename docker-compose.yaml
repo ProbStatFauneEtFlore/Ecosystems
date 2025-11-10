@@ -19,5 +19,5 @@ services:
       dockerfile: Dockerfile.gdal
     container_name: gdal_tools
     volumes:
-      - ./data:/data
+      - ./app:/app
     entrypoint: ["/bin/bash", "-lc", "sleep infinity"]
