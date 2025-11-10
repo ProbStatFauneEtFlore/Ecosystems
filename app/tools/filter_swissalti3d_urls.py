@@ -3,9 +3,10 @@ import csv
 import os
 import sys
 
-OBS_CSV = "../data/observations_swiss.csv"
-URLS_IN = "../data/swissalti3d_urls.txt"
-URLS_OUT = "../data/swissalti3d_urls_filtered.txt"
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+OBS_CSV = os.path.join(ROOT_DIR, "app/data", "observations_swiss.csv")
+URLS_IN = os.path.join(ROOT_DIR, "app/data", "swissalti3d_urls.txt")
+URLS_OUT = os.path.join(ROOT_DIR, "app/data", "swissalti3d_urls_filtered.txt")
 
 # -------------------------------------------------
 # utils
