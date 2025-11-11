@@ -52,7 +52,7 @@ docker compose version
 
 4. Run commands inside the `gdal_tools` container:
    ```bash
-   docker exec -it gdal_tools bash
+   docker exec -it gdal_tools bash # enter the container (base dir: /app)
    ```
 
 ---
@@ -64,32 +64,32 @@ Add **real altitude values** from the **swissALTI3D** model to each fauna/flora 
 
 #### Steps
 
-Run all processing inside the `gdal_tools` container, and invoke Python tools through the main entry point `eco_app.py` (for example: `python3 /app/eco_app.py <tool> [options]`).
+Run all processing inside the `gdal_tools` container, and invoke Python tools through the main entry point `eco_app.py` (for example: `python3 eco_app.py <tool> [options]`).
 
 ##### a) Download swissALTI3D tiles
 
-- The script `import_tiles.py` filters `.tif` URLs from the file `swissalti3d_urls.txt` and download them as `.tif` files in `app/data/swissALTI3D_tiles`:
+- The script `import_tiles.py` filters `.tif` URLs from the file `swissalti3d_urls.txt` and download them as `.tif` files in `data/swissALTI3D_tiles`:
   ```bash
-  python3 /app/eco_app.py import_tiles --force False
+  python3 eco_app.py import_tiles --force False
   ```
 
-  > The `.tif` tiles are stored under `app/data/swissALTI3D_tuiles/`.
+  > The `.tif` tiles are stored under `data/swissALTI3D_tuiles/`.
 
 ---
 
 ##### b) Compute altitude for each observation
 
 ```bash
-python3 /app/eco_app.py augment_altitude_fast   \
---in app/data/observations_swiss.csv            \
---out app/data/observations_with_elevation.csv  \
---tif-dir app/data/swissALTI3D_tiles            \
+python3 eco_app.py augment_altitude_fast   \
+--in data/observations_swiss.csv            \
+--out data/observations_with_elevation.csv  \
+--tif-dir data/swissALTI3D_tiles            \
 --workers 6
 ```
 
 Or shorter:
 ```bash
-python3 app/eco_app.py augment_altitude_fast  // uses default parameters
+python3 eco_app.py augment_altitude_fast  # uses default parameters
 ```
 
 Parameters:
@@ -121,18 +121,18 @@ Group nearby observations in space and altitude → **ecosystem clusters**.
 In `gdal_tools`:
 
 ```bash
-python3 app/eco_app.py cluster_ecosystemes.py         \
---in-csv app/data/observations_with_elevation.csv     \
---out-csv app/data/observations_with_clusters.csv     \
---out-geojson-2056 app/data/ecosystemes_2056.geojson  \
---out-geojson-4326 app/data/ecosystemes_4326.geojson  \
+python3 eco_app.py cluster_ecosystemes.py         \
+--in-csv data/observations_with_elevation.csv     \
+--out-csv data/observations_with_clusters.csv     \
+--out-geojson-2056 data/ecosystemes_2056.geojson  \
+--out-geojson-4326 data/ecosystemes_4326.geojson  \
 --eps 120                                             \
 --min-samples 5                                       \
 --alt-scale 50
 ```
 Or shorter:
 ```bash 
-python3 app/eco_app.py cluster_ecosystemes.py  // uses default parameters
+python3 eco_app.py cluster_ecosystemes.py  # uses default parameters
 ```
 
 Parameters:
@@ -147,9 +147,9 @@ The script:
 
 Outputs:
 ```
-/app/data/observations_with_clusters.csv
-/app/data/ecosystemes_2056.geojson
-/app/data/ecosystemes_4326.geojson
+data/observations_with_clusters.csv
+data/ecosystemes_2056.geojson
+data/ecosystemes_4326.geojson
 ```
 
 ---

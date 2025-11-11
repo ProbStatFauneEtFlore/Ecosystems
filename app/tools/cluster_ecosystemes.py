@@ -44,12 +44,12 @@ def print_progress(current, total, prefix=""):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--in-csv", required=True)
-    ap.add_argument("--out-csv", required=True)
-    ap.add_argument("--out-geojson-2056", required=True)
-    ap.add_argument("--out-geojson-4326", required=True)
-    ap.add_argument("--eps", type=float, default=80.0)
-    ap.add_argument("--min-samples", type=int, default=10)
+    ap.add_argument("--in-csv", default="data/observations_with_elevation.csv")
+    ap.add_argument("--out-csv", default="data/observations_with_clusters.csv")
+    ap.add_argument("--out-geojson-2056", default="data/ecosystemes_2056.geojson")
+    ap.add_argument("--out-geojson-4326", default="data/ecosystemes_4326.geojson")
+    ap.add_argument("--eps", type=float, default=120.0)
+    ap.add_argument("--min-samples", type=int, default=5)
     ap.add_argument("--alt-scale", type=float, default=50.0)
     ap.add_argument("--lon-field", default="longitude")
     ap.add_argument("--lat-field", default="latitude")
