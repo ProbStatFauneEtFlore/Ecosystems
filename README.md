@@ -50,6 +50,11 @@ docker compose version
    docker ps
    ```
 
+4. Run commands inside the `gdal_tools` container:
+   ```bash
+   docker exec -it gdal_tools bash
+   ```
+
 ---
 
 ### 2️⃣ Altitude — CSV enrichment
@@ -59,16 +64,13 @@ Add **real altitude values** from the **swissALTI3D** model to each fauna/flora 
 
 #### Steps
 
+Run all processing inside the `gdal_tools` container, and invoke Python tools through the main entry point `eco_app.py` (for example: `python3 /app/eco_app.py <tool> [options]`).
+
 ##### a) Download swissALTI3D tiles
 
-- The script `filter_swissalti3d_urls.py` extracts `.tif` URLs from the file `swissalti3d_urls.txt`:
+- The script `import_tiles.py` filters `.tif` URLs from the file `swissalti3d_urls.txt` and download them as `.tif` files in `app/data/swissALTI3D_tiles`:
   ```bash
-  python3 /app/tools/filter_swissalti3d_urls.py
-  ```
-
-- Then download all tiles:
-  ```bash
-  bash /app/tools/import_tiles.sh
+  python3 /app/eco_app.py import_tiles --force False
   ```
 
   > The `.tif` tiles are stored under `app/data/swissALTI3D_tuiles/`.
@@ -77,18 +79,24 @@ Add **real altitude values** from the **swissALTI3D** model to each fauna/flora 
 
 ##### b) Compute altitude for each observation
 
-Run the script inside the `gdal_tools` container:
-
 ```bash
-docker exec -it gdal_tools bash
-cd /tools
-
-python3 augment_altitude_fast.py            \ 
---in /data/observations_swiss.csv           \
---out /data/observations_with_elevation.csv \
---tif-dir /data/swissALTI3D_tuiles          \
+python3 /app/eco_app.py augment_altitude_fast   \
+--in app/data/observations_swiss.csv            \
+--out app/data/observations_with_elevation.csv  \
+--tif-dir app/data/swissALTI3D_tiles            \
 --workers 6
 ```
+
+Or shorter:
+```bash
+python3 app/eco_app.py augment_altitude_fast  // uses default parameters
+```
+
+Parameters:
+- `--in`: input CSV 
+- `--out`: output CSV with added `elevation_m` column
+- `--tif-dir`: directory containing swissALTI3D `.tif` tiles
+- `--workers`: number of parallel workers for speedup
 
 This script:
 - reads each observation (`longitude`, `latitude`),
@@ -113,14 +121,18 @@ Group nearby observations in space and altitude → **ecosystem clusters**.
 In `gdal_tools`:
 
 ```bash
-python3 /data/tools/cluster_ecosystemes.py          \
---in-csv /data/observations_with_elevation.csv      \
---out-csv /data/observations_with_clusters.csv      \
---out-geojson-2056 /data/ecosystemes_2056.geojson   \
---out-geojson-4326 /data/ecosystemes_4326.geojson   \
---eps 120                                           \
---min-samples 5                                     \
+python3 app/eco_app.py cluster_ecosystemes.py         \
+--in-csv app/data/observations_with_elevation.csv     \
+--out-csv app/data/observations_with_clusters.csv     \
+--out-geojson-2056 app/data/ecosystemes_2056.geojson  \
+--out-geojson-4326 app/data/ecosystemes_4326.geojson  \
+--eps 120                                             \
+--min-samples 5                                       \
 --alt-scale 50
+```
+Or shorter:
+```bash 
+python3 app/eco_app.py cluster_ecosystemes.py  // uses default parameters
 ```
 
 Parameters:
@@ -168,27 +180,31 @@ Display the ecosystems and their taxons on a web map.
 
 ```
 /Ecosystems
- ├── app/
- │   ├── data/
- │   │   ├── ecosystemes_2056.geojson
- │   │   ├── ecosystemes_4326.geojson
- │   │   ├── observations_swiss.csv
- │   │   ├── observations_with_elevation.csv
- │   │   ├── observations_with_clusters.csv
- │   │   └── swissALTI3D_tuiles/
- │   │
- │   ├── tools/
- │   │   ├── augment_altitude_fast.py
- │   │   ├── cluster_ecosystemes.py
- │   │   ├── filter_swissalti3d_urls.py
- │   │   └── import_tiles.sh
- │   │
- │   └── eco_map.html
- │
- ├── .gitignore
- ├── docker-compose.yaml
- ├── Dockerfile.gdal
- └── README.md
+├─ 📁 app/
+│  ├─ 📁 data/
+│  │  ├─ 📄 observations_swiss.csv
+│  │  ├─ 📄 swissalti3d_urls.txt
+│  │  └─ 🟫 [GENERATED]
+│  │     ├─ 📁 swissALTI3D_tiles/    — downloaded .tif tiles
+│  │     ├─ 📄 swissalti3d_urls_filtered.txt
+│  │     ├─ 📄 observations_with_elevation.csv
+│  │     ├─ 📄 observations_with_clusters.csv
+│  │     ├─ 📄 ecosystemes_2056.geojson
+│  │     └─ 📄 ecosystemes_4326.geojson
+│  │
+│  ├─ 📁 tools/
+│  │  ├─ 📄 augment_altitude_fast.py
+│  │  ├─ 📄 cluster_ecosystemes.py
+│  │  ├─ 📄 import_tiles.py
+│  │  └─ 🐚 import_tiles.sh
+│  │
+│  ├─ 📄 eco_app.py
+│  └─ 📄 eco_map.html
+│
+├─ .gitignore
+├─ docker-compose.yaml
+├─ Dockerfile.gdal
+└─ README.md
 ```
 
 ---
