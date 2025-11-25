@@ -57,7 +57,34 @@ docker compose version
 
 ---
 
-### 2️⃣ Altitude — CSV enrichment
+### 2️⃣ Filtrage qualité — CSV cleanup
+
+#### Goal
+Nettoyer les observations avant l'enrichissement (précision GPS) ou avant le clustering (présence d'altitude).
+
+#### Steps
+
+Toujours depuis le conteneur `gdal_tools`, en passant par l'entrée unique `eco_app.py` :
+
+- Mode `position` (garde uniquement les lignes avec `positional_accuracy` présent et ≤ 100 m) :
+  ```bash
+  python3 eco_app.py filter_csv position \
+  --in data/observations_swiss.csv \
+  --out data/observations_swiss_positional.csv
+  ```
+  - `--out` est optionnel. Par défaut : `<in>_positional_filtered.csv`.
+
+- Mode `elevation` (supprime les lignes sans altitude pour le clustering) :
+  ```bash
+  python3 eco_app.py filter_csv elevation \
+  --in data/observations_with_elevation.csv \
+  --out data/observations_with_elevation_filtered.csv
+  ```
+  - `--out` est optionnel. Par défaut : `<in>_with_elevation.csv`.
+
+---
+
+### 3️⃣ Altitude — CSV enrichment
 
 #### Goal
 Add **real altitude values** from the **swissALTI3D** model to each fauna/flora observation.
@@ -111,7 +138,7 @@ Outputs:
 
 ---
 
-### 3️⃣ Clusters — ecosystem creation
+### 4️⃣ Clusters — ecosystem creation
 
 #### Goal
 Group nearby observations in space and altitude → **ecosystem clusters**.
@@ -154,7 +181,7 @@ data/ecosystemes_4326.geojson
 
 ---
 
-### 4️⃣ Visualization — interactive map
+### 5️⃣ Visualization — interactive map
 
 #### Goal
 Display the ecosystems and their taxons on a web map.
