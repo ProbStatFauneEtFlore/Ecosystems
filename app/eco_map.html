@@ -60,8 +60,8 @@
         html += "<p>Aucun taxon trouvé pour ce cluster.</p>";
       } else {
         html += "<p><strong>Taxons observés :</strong></p><ol>";
-        Object.entries(counts).sort((a,b)=>b[1]-a[1]).forEach(([taxon, count]) => {
-          html += `<li>${taxon} : ${count}</li>`;
+        Object.entries(counts).sort((a,b)=>b[1]-a[1]).forEach(([label, count]) => {
+          html += `<li>${label} : ${count}</li>`;
         });
         html += "</ol>";
       }
@@ -76,11 +76,19 @@
       complete: function(results) {
         results.data.forEach(row => {
           const cid = row['cluster_id'];
-          const taxon = row['taxon_id'];
           if (cid === undefined || cid === null || cid === -1) return;
+
+          const common = row['common_name'];
+          const group = row['group'];
+          const iconic = row['iconic_taxon_name'];
+
+          let label = common || iconic || "inconnu";
+          if (group) {
+            label = `${label} (${group})`;
+          }
+
           if (!taxonsByCluster[cid]) taxonsByCluster[cid] = {};
-          const key = taxon ? taxon : "inconnu";
-          taxonsByCluster[cid][key] = (taxonsByCluster[cid][key] || 0) + 1;
+          taxonsByCluster[cid][label] = (taxonsByCluster[cid][label] || 0) + 1;
         });
         // ensuite on charge le geojson
         loadGeojson();
