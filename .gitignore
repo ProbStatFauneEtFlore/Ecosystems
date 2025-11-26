@@ -215,3 +215,5 @@ app/data/swissalti3d_urls_filtered.txt
 app/data/observations_with_elevation_filtered_positional_filtered.csv
 app/data/observations_with_elevation_filtered.csv
 app/data/observations_swiss_positional_filtered.csv
+app/data/observations_full_filtered.csv
+app/data/observations_swiss_positional.csv
