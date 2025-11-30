@@ -39,14 +39,26 @@ def filter_for_clustering(csv_path):
     elevation = pd.to_numeric(df["elevation_m"], errors="coerce")
     filtered = df[elevation.notna()]
 
-    out_path = _output_path(csv_path, "filtered")
+    out_path = _output_path(csv_path, "el_filtered")
+    filtered.to_csv(out_path, index=False)
+    return out_path
+
+def filter_for_quality_grade(csv_path, types):
+    df = pd.read_csv(csv_path)
+    if "quality_grade" not in df.columns:
+        raise ValueError("CSV must contain 'quality_grade' column")
+
+    filtered = df[df["quality_grade"].notna() & df["quality_grade"].isin(types)]
+
+    out_path = _output_path(csv_path, "grade_filtered")
     filtered.to_csv(out_path, index=False)
     return out_path
 
 
 def main():
     parser = argparse.ArgumentParser(description="Filter CSV rows for positional accuracy or elevation presence.")
-    parser.add_argument("mode", choices=["position", "elevation"], help="Filtering mode to apply.")
+    parser.add_argument("mode", choices=["position", "elevation", "grade"], help="Filtering mode to apply.")
+    parser.add_argument("types", nargs="*", help="Quality grade filter values (used only when mode=grade).")
     parser.add_argument("--in", dest="inp", help="Input CSV path.", default=None)
     parser.add_argument("--out", dest="out", help="Output CSV path (optional).")
     args = parser.parse_args()
@@ -56,8 +68,10 @@ def main():
     print(in_path)
     if args.mode == "position":
         produced = filter_for_positional_treatment(in_path)
-    else:
+    elif args.mode == "elevation":
         produced = filter_for_clustering(in_path)
+    elif args.mode == "grade":
+        produced = filter_for_quality_grade(in_path, args.types)
 
     out_path = args.out or produced
     if produced != out_path:
