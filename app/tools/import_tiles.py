@@ -3,10 +3,12 @@ import argparse
 import csv
 import os
 import sys
+import tempfile
+import subprocess
+from utils import Utils
 
-OBS_CSV = os.path.join("data", "observations_swiss.csv")
-URLS_IN = os.path.join("data", "swissalti3d_urls.txt")
-URLS_OUT = os.path.join("data", "swissalti3d_urls_filtered.txt")
+URLS_IN = os.path.join(Utils.DATA_DIR, "swissalti3d_urls.txt")
+URLS_OUT = os.path.join(Utils.DATA_DIR, "swissalti3d_urls_filtered.txt")
 
 # -------------------------------------------------
 # utils
@@ -47,74 +49,113 @@ def wgs84_to_lv95(lon_deg, lat_deg):
 def e_n_to_tilekey(e, n):
     return f"{int(e // 1000)}-{int(n // 1000)}"
 
+def generate_filtered_urls(data_raw_path: str) -> int:
+    """
+    Build the filtered URLs file based on observations; returns number of URLs kept.
+    """
+    with open(data_raw_path, "r", encoding="utf-8", newline="") as f:
+        total_obs = sum(1 for _ in f) - 1  # -1 pour l'entete
+
+    needed_tiles = set()
+    with open(data_raw_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for i, row in enumerate(reader, start=1):
+            try:
+                lon = float(row["longitude"])
+                lat = float(row["latitude"])
+            except (KeyError, ValueError):
+                print_progress(i, total_obs, prefix="Obs -> tuiles ")
+                continue
+            E, N = wgs84_to_lv95(lon, lat)
+            tile_key = e_n_to_tilekey(E, N)
+            needed_tiles.add(tile_key)
+            if i % 1000 == 0 or i == total_obs:
+                print_progress(i, total_obs, prefix="Obs -> tuiles ")
+
+    print(f"{len(needed_tiles)} tuiles necessaires d'apres les observations.")
+
+    with open(URLS_IN, "r", encoding="utf-8") as fin:
+        all_urls = [line.strip() for line in fin if line.strip()]
+
+    total_urls = len(all_urls)
+    kept = []
+
+    for idx, url in enumerate(all_urls, start=1):
+        name = os.path.basename(url)
+        for tk in needed_tiles:
+            if f"_{tk}_" in name:
+                kept.append(url)
+                break
+        if idx % 200 == 0 or idx == total_urls:
+            print_progress(idx, total_urls, prefix="Filtrage URLs  ")
+
+    with open(URLS_OUT, "w", encoding="utf-8") as fout:
+        fout.write("\n".join(kept))
+
+    print(f"\nTermine. {len(kept)} URLs gardees dans {URLS_OUT}")
+    return len(kept)
+
+def import_tiles(force=False):
+    """
+    Filter tile URLs and download tiles.
+    - force=False: generate URL list if absent; download only tiles not yet present.
+    - force=True: regenerate URL list and download all listed tiles (even if already present).
+    """
+    from app.tools.utils import Utils
+
+    tiles_dir = Utils.TILES_DIR.rstrip("/\\")
+
+    regenerate = force or (not os.path.exists(URLS_OUT))
+    if regenerate:
+        print("Generation de la liste filtree des URLs...")
+        generate_filtered_urls(Utils.DATA_RAW)
+    else:
+        print(f"Liste filtree deja presente ({URLS_OUT}), utilisation de l'existant (ajoutez --force pour regenir).")
+
+    with open(URLS_OUT, "r", encoding="utf-8") as fin:
+        url_list = [line.strip() for line in fin if line.strip()]
+
+    if not url_list:
+        print("Aucune URL a telecharger. Verifiez vos donnees.")
+        return
+
+    os.makedirs(tiles_dir, exist_ok=True)
+
+    if not force:
+        missing = []
+        for url in url_list:
+            fname = os.path.basename(url)
+            target_path = os.path.join(tiles_dir, fname)
+            if not os.path.exists(target_path):
+                missing.append(url)
+        if not missing:
+            print("Toutes les tuiles sont deja presentes, rien a telecharger.")
+            return
+        url_list = missing
+        print(f"{len(url_list)} tuiles manquantes seront telechargees (skip deja presentes).")
+
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", suffix=".txt") as tmp:
+        tmp.write("\n".join(url_list))
+        tmp_path = tmp.name
+
+    print(f"Debut du telechargement des tuiles avec aria2c ({len(url_list)} fichiers)...")
+    try:
+        subprocess.run(["bash", "tools/import_tiles.sh", tmp_path, tiles_dir], check=True)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+    print("Telechargement termine.")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--force", dest="force", default=False, help="Re-generate even if output exists", action="store_true")
+    ap.add_argument("--force", dest="force", default=False, help="Re-generate and re-download everything", action="store_true")
     args = ap.parse_args()
-    generate = True
-    if os.path.exists(URLS_OUT) and not args.force:
-        print(f"WARNING: Le fichier {URLS_OUT} existe déjà. Utilisez --force pour le régénérer.")
-        generate = False
-    
-    if generate:
-        # -------------------------------------------------
-        # 1) lire les observations et déterminer les tuiles
-        # -------------------------------------------------
-        # on compte d'abord les lignes pour la barre
-        with open(OBS_CSV, "r", encoding="utf-8", newline="") as f:
-            total_obs = sum(1 for _ in f) - 1  # -1 pour l'entête
 
-        needed_tiles = set()
-        with open(OBS_CSV, "r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            for i, row in enumerate(reader, start=1):
-                try:
-                    lon = float(row["longitude"])
-                    lat = float(row["latitude"])
-                except (KeyError, ValueError):
-                    print_progress(i, total_obs, prefix="Obs -> tuiles ")
-                    continue
-                E, N = wgs84_to_lv95(lon, lat)
-                tile_key = e_n_to_tilekey(E, N)
-                needed_tiles.add(tile_key)
-                if i % 1000 == 0 or i == total_obs:
-                    print_progress(i, total_obs, prefix="Obs -> tuiles ")
+    import_tiles(force=args.force)
 
-        print(f"{len(needed_tiles)} tuiles nécessaires d'après les observations.")
 
-        # -------------------------------------------------
-        # 2) filtrer la liste d'URLs avec une barre
-        # -------------------------------------------------
-        with open(URLS_IN, "r", encoding="utf-8") as fin:
-            all_urls = [line.strip() for line in fin if line.strip()]
-
-        total_urls = len(all_urls)
-        kept = []
-
-        for idx, url in enumerate(all_urls, start=1):
-            name = os.path.basename(url)
-            # test rapide: les noms de swissALTI3D contiennent _Ekm-Nkm_
-            matched = False
-            for tk in needed_tiles:
-                if f"_{tk}_" in name:
-                    kept.append(url)
-                    matched = True
-                    break
-            # progression
-            if idx % 200 == 0 or idx == total_urls:
-                print_progress(idx, total_urls, prefix="Filtrage URLs  ")
-
-        # -------------------------------------------------
-        # 3) écrire le fichier filtré
-        # -------------------------------------------------
-        with open(URLS_OUT, "w", encoding="utf-8") as fout:
-            fout.write("\n".join(kept))
-
-        print(f"\nTerminé ✅ {len(kept)} URLs gardées dans {URLS_OUT}")
-
-    # -------------------------------------------------
-    # 4) lancer le téléchargement avec aria2c
-    # -------------------------------------------------
-    print(f"Début du téléchargement des tuiles avec aria2c...")
-    os.system(f"bash tools/import_tiles.sh")
-    print("Téléchargement terminé ✅")
+if __name__ == "__main__":
+    main()

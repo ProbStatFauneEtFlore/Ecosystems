@@ -56,22 +56,27 @@ def filter_for_quality_grade(csv_path, types):
 
 
 def main():
+    from tools.utils import Utils
     parser = argparse.ArgumentParser(description="Filter CSV rows for positional accuracy or elevation presence.")
     parser.add_argument("mode", choices=["position", "elevation", "grade"], help="Filtering mode to apply.")
     parser.add_argument("types", nargs="*", help="Quality grade filter values (used only when mode=grade).")
-    parser.add_argument("--in", dest="inp", help="Input CSV path.", default=None)
+    parser.add_argument("--in", dest="inp", default=None, help="Input CSV path.")
     parser.add_argument("--out", dest="out", help="Output CSV path (optional).")
     args = parser.parse_args()
 
-    in_path = args.inp if args.inp is not None else "data/observations_swiss.csv" \
-        if args.mode == "position" else "data/observations_with_elevation.csv"
-    print(in_path)
+    in_path = args.inp if args.inp is not None \
+                        else Utils.get_data_most_filtered_path([args.mode]) 
+    if args.out is None:
+        args.out = Utils.name_file(in_path, "filtered", [args.mode] + args.types)
+
     if args.mode == "position":
         produced = filter_for_positional_treatment(in_path)
     elif args.mode == "elevation":
         produced = filter_for_clustering(in_path)
     elif args.mode == "grade":
         produced = filter_for_quality_grade(in_path, args.types)
+    else:
+        raise ValueError(f"Unknown mode: {args.mode}")
 
     out_path = args.out or produced
     if produced != out_path:

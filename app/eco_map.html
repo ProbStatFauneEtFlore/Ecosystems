@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Écosystèmes faune/flore</title>
+  <title>Ecosystèmes faune/flore</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -28,19 +28,45 @@
       box-shadow: 0 2px 6px rgba(0,0,0,0.1);
     }
     .info-panel h2 { margin: 0 0 6px 0; font-size: 14px; }
+    .controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: rgba(255,255,255,0.93);
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    .controls label { display: block; margin-bottom: 6px; }
+    .controls .row { display: flex; align-items: center; gap: 8px; }
+    .controls .value { font-weight: 600; min-width: 48px; text-align: right; }
   </style>
 </head>
 <body>
   <div id="map"></div>
+  <div class="controls">
+    <label>Année</label>
+    <div class="row">
+      <input id="yearRange" type="range" min="0" max="0" value="0" step="1" disabled />
+      <span id="yearValue" class="value">-</span>
+    </div>
+    <label class="row" style="margin-top:6px;">
+      <input id="allYears" type="checkbox" checked />
+      <span>Toutes les années</span>
+    </label>
+  </div>
   <div class="info-panel" id="info">
-    <h2>Écosystèmes</h2>
+    <h2>Ecosystèmes</h2>
     <p>Passe la souris sur un polygone pour voir les taxons.</p>
   </div>
 
   <script>
-    // tes fichiers EXACTS
     const GEOJSON_URL = 'data/ecosystemes_4326.geojson';
-    const OBS_CSV_URL = 'data/observations_with_clusters.csv';
+    const OBS_CSV_URL = 'data/clusters/observations_with_clusters.csv';
+    const YEAR_FIELD = 'cluster_year';
 
     const map = L.map('map').setView([46.8, 8.2], 8);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -48,14 +74,21 @@
     }).addTo(map);
 
     const infoEl = document.getElementById("info");
-    const taxonsByCluster = {};
+    const yearRangeEl = document.getElementById("yearRange");
+    const yearValueEl = document.getElementById("yearValue");
+    const allYearsEl = document.getElementById("allYears");
 
-    function setInfo(clusterId, counts) {
+    const taxonsByYearCluster = {}; // {year: {clusterId: {label: count}}}
+    const yearLayers = {}; // {year: L.GeoJSON}
+    let boundsAll = null;
+    let yearList = [];
+
+    function setInfo(clusterId, counts, year) {
       if (!clusterId) {
-        infoEl.innerHTML = "<h2>Écosystèmes</h2><p>Passe la souris sur un polygone pour voir les taxons.</p>";
+        infoEl.innerHTML = "<h2>Ecosystèmes</h2><p>Passe la souris sur un polygone pour voir les taxons.</p>";
         return;
       }
-      let html = `<h2>Cluster ${clusterId}</h2>`;
+      let html = `<h2>Cluster ${clusterId} (${year})</h2>`;
       if (!counts || Object.keys(counts).length === 0) {
         html += "<p>Aucun taxon trouvé pour ce cluster.</p>";
       } else {
@@ -68,7 +101,43 @@
       infoEl.innerHTML = html;
     }
 
-    // 1) lire le CSV
+    function updateYearControls(minYear, maxYear) {
+      yearRangeEl.min = minYear;
+      yearRangeEl.max = maxYear;
+      yearRangeEl.value = maxYear;
+      yearRangeEl.disabled = false;
+      yearValueEl.textContent = `${maxYear}`;
+    }
+
+    function setYearValueLabel(value, isAll) {
+      yearValueEl.textContent = isAll ? "Toutes" : `${value}`;
+    }
+
+    function refreshLayers() {
+      const showAll = allYearsEl.checked;
+      const targetYear = parseInt(yearRangeEl.value, 10);
+      Object.values(yearLayers).forEach(layer => {
+        if (map.hasLayer(layer)) map.removeLayer(layer);
+      });
+
+      if (showAll) {
+        Object.values(yearLayers).forEach(layer => layer.addTo(map));
+        setYearValueLabel(null, true);
+      } else {
+        if (yearLayers[targetYear]) {
+          yearLayers[targetYear].addTo(map);
+          setYearValueLabel(targetYear, false);
+        }
+      }
+
+      if (boundsAll && showAll) {
+        map.fitBounds(boundsAll, { maxZoom: 12 });
+      } else if (!showAll && yearLayers[targetYear]) {
+        const b = yearLayers[targetYear].getBounds();
+        if (b && b.isValid()) map.fitBounds(b, { maxZoom: 12 });
+      }
+    }
+
     Papa.parse(OBS_CSV_URL, {
       download: true,
       header: true,
@@ -76,7 +145,9 @@
       complete: function(results) {
         results.data.forEach(row => {
           const cid = row['cluster_id'];
+          const year = row[YEAR_FIELD];
           if (cid === undefined || cid === null || cid === -1) return;
+          if (year === undefined || year === null || year === "") return;
 
           const common = row['common_name'];
           const group = row['group'];
@@ -87,45 +158,66 @@
             label = `${label} (${group})`;
           }
 
-          if (!taxonsByCluster[cid]) taxonsByCluster[cid] = {};
-          taxonsByCluster[cid][label] = (taxonsByCluster[cid][label] || 0) + 1;
+          if (!taxonsByYearCluster[year]) taxonsByYearCluster[year] = {};
+          if (!taxonsByYearCluster[year][cid]) taxonsByYearCluster[year][cid] = {};
+          taxonsByYearCluster[year][cid][label] = (taxonsByYearCluster[year][cid][label] || 0) + 1;
         });
-        // ensuite on charge le geojson
         loadGeojson();
       }
     });
 
-    // 2) lire le geojson
     function loadGeojson() {
       fetch(GEOJSON_URL)
         .then(r => r.json())
         .then(data => {
-          const layer = L.geoJSON(data, {
-            style: f => {
-              const cid = f.properties.cluster_id;
-              const hue = (cid * 1337) % 360;
-              return {
-                color: `hsl(${hue}, 70%, 35%)`,
-                weight: 1,
-                fillColor: `hsl(${hue}, 80%, 65%)`,
-                fillOpacity: 0.4
-              };
-            },
-            onEachFeature: function(feature, layer) {
-              const cid = feature.properties.cluster_id;
-              layer.on('mouseover', function() {
-                setInfo(cid, taxonsByCluster[cid]);
-                layer.setStyle({weight: 3});
-              });
-              layer.on('mouseout', function() {
-                setInfo(null);
-                layer.setStyle({weight: 1});
-              });
-            }
-          }).addTo(map);
+          yearList = Array.from(new Set((data.features || []).map(f => f.properties.year))).sort((a,b)=>a-b);
+          if (yearList.length === 0) {
+            console.warn("Aucune année trouvée dans le geojson.");
+            return;
+          }
+          updateYearControls(yearList[0], yearList[yearList.length - 1]);
 
-          // zoom sur tout
-          map.fitBounds(layer.getBounds());
+          yearList.forEach(year => {
+            const layer = L.geoJSON(data, {
+              filter: f => f.properties.year === year,
+              style: f => {
+                const cid = f.properties.cluster_id;
+                const hue = (cid * 1337) % 360;
+                return {
+                  color: `hsl(${hue}, 70%, 35%)`,
+                  weight: 1,
+                  fillColor: `hsl(${hue}, 80%, 65%)`,
+                  fillOpacity: 0.4
+                };
+              },
+              onEachFeature: function(feature, layer) {
+                const cid = feature.properties.cluster_id;
+                layer.on('mouseover', function() {
+                  const counts = (taxonsByYearCluster[year] || {})[cid];
+                  setInfo(cid, counts, year);
+                  layer.setStyle({weight: 3});
+                });
+                layer.on('mouseout', function() {
+                  setInfo(null);
+                  layer.setStyle({weight: 1});
+                });
+              }
+            });
+            yearLayers[year] = layer;
+          });
+
+          const groupAll = L.featureGroup(Object.values(yearLayers));
+          boundsAll = groupAll.getBounds();
+
+          refreshLayers();
+
+          yearRangeEl.addEventListener("input", () => {
+            allYearsEl.checked = false;
+            refreshLayers();
+          });
+          allYearsEl.addEventListener("change", () => {
+            refreshLayers();
+          });
         });
     }
   </script>
