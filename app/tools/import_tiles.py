@@ -108,7 +108,7 @@ def import_tiles(force=False):
     regenerate = force or (not os.path.exists(URLS_OUT))
     if regenerate:
         print("Generation de la liste filtree des URLs...")
-        generate_filtered_urls(Utils.DATA_RAW)
+        generate_filtered_urls(Utils.DATA_DIR)
     else:
         print(f"Liste filtree deja presente ({URLS_OUT}), utilisation de l'existant (ajoutez --force pour regenir).")
 

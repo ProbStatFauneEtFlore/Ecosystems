@@ -8,10 +8,9 @@ from typing import Optional, Sequence, Iterable
 class Utils:
 
     DATA_DIR = "data/"
-    DATA_RAW_DIR = os.path.join(DATA_DIR, "raw/")
-    DATA_NEW_DIR = os.path.join(DATA_DIR, "new/")
-
-    DATA_RAW = os.path.join(DATA_RAW_DIR, "observations_swiss.csv")
+    DATA_CLUSTERS_DIR = os.path.join(DATA_DIR, "clusters/")
+    DATA_PROCESSED_DIR = os.path.join(DATA_DIR, "processed/")
+    DATA_RAW = os.path.join(DATA_DIR, "observations_swiss.csv")
     TILES_DIR = os.path.join(DATA_DIR, "swissALTI3D_tiles/")
 
     @classmethod
@@ -28,9 +27,9 @@ class Utils:
             raise ValueError("filter_types must contain at least one filter keyword.")
 
         try:
-            csv_files = os.listdir(cls.DATA_NEW_DIR)
+            csv_files = os.listdir(cls.DATA_PROCESSED_DIR)
         except FileNotFoundError as exc:
-            raise FileNotFoundError(f"Pre-process directory not found: {cls.DATA_NEW_DIR}") from exc
+            raise FileNotFoundError(f"Pre-process directory not found: {cls.DATA_PROCESSED_DIR}") from exc
 
         target_filters = [f.lower() for f in filter_types]
 
@@ -39,49 +38,84 @@ class Utils:
             if "filtered" not in name_lower or not fname.endswith(".csv"):
                 continue
             if all(ft in name_lower for ft in target_filters):
-                return os.path.join(cls.DATA_NEW_DIR, fname)
+                return os.path.join(cls.DATA_PROCESSED_DIR, fname)
 
         raise FileNotFoundError(
-            f"Aucun fichier 'filtered' avec filtres {filter_types} n'a ete trouve dans {cls.DATA_NEW_DIR}."
+            f"Aucun fichier 'filtered' avec filtres {filter_types} n'a ete trouve dans {cls.DATA_PROCESSED_DIR}."
         )
     
     @classmethod
-    def get_data_most_filtered_path(cls, exclude: Optional[Sequence[str]] = None) -> str:
+    def get_data_most_filtered_path(
+        cls,
+        exclude_filter: Optional[Sequence[str]] = None,
+        include_filter: Optional[Sequence[str]] = None,
+        exclude_enrich: Optional[Sequence[str]] = None,
+        include_enrich: Optional[Sequence[str]] = None,
+    ) -> str:
         """
-        Return the pre-process CSV path that contains 'filtered' and the most other filters,
-        excluding any filters in the exclude list.
-        Ex: exclude=["grade"] will ignore files that contain "grade" in their filename.
-        Raises FileNotFoundError if no suitable file is found.
+        Return the CSV path contenant le plus de filtres (et enrichissements) compatibles
+        avec les contraintes include/exclude.
+        - exclude_filter / include_filter agissent sur les tags apres 'filtered'
+        - exclude_enrich / include_enrich agissent sur les tags apres 'enriched'
+        Si aucun fichier ne correspond, on retombe sur DATA_RAW.
         """
         import os
 
-        exclude = exclude or []
-        exclude = [e.lower() for e in exclude]
+        exclude_filter = [e.lower() for e in (exclude_filter or [])]
+        include_filter = [i.lower() for i in (include_filter or [])]
+        exclude_enrich = [e.lower() for e in (exclude_enrich or [])]
+        include_enrich = [i.lower() for i in (include_enrich or [])]
 
         try:
-            csv_files = os.listdir(cls.DATA_NEW_DIR)
+            csv_files = os.listdir(cls.DATA_PROCESSED_DIR)
         except FileNotFoundError as exc:
-            raise FileNotFoundError(f"Pre-process directory not found: {cls.DATA_NEW_DIR}") from exc
+            raise FileNotFoundError(f"Pre-process directory not found: {cls.DATA_PROCESSED_DIR}") from exc
 
-        best_file = None
-        best_filter_count = -1
+        def _extract_tags(filename: str) -> tuple[list[str], list[str]]:
+            parts = os.path.splitext(filename)[0].lower().split("_")
+            filters: list[str] = []
+            enrichments: list[str] = []
+            if "filtered" in parts:
+                idx_filtered = parts.index("filtered")
+                after_filtered = parts[idx_filtered + 1 :]
+                if "enriched" in after_filtered:
+                    idx_enriched = after_filtered.index("enriched")
+                    filters = [p for p in after_filtered[:idx_enriched] if p]
+                    enrichments = [p for p in after_filtered[idx_enriched + 1 :] if p]
+                else:
+                    filters = [p for p in after_filtered if p]
+            elif "enriched" in parts:
+                idx_enriched = parts.index("enriched")
+                enrichments = [p for p in parts[idx_enriched + 1 :] if p]
+            return filters, enrichments
+
+        candidates: list[tuple[str, int, int]] = []  # (fname, nb_filters, nb_enrich)
 
         for fname in csv_files:
             name_lower = fname.lower()
-            if "filtered" not in name_lower or not fname.endswith(".csv"):
-                continue
-            if any(ex in name_lower for ex in exclude):
+            if not fname.endswith(".csv"):
                 continue
 
-            filter_count = name_lower.count("_")  # crude way to estimate number of filters
-            if filter_count > best_filter_count:
-                best_filter_count = filter_count
-                best_file = fname
+            filters, enrichments = _extract_tags(name_lower)
 
-        if best_file is None:
+            if any(ex in filters for ex in exclude_filter):
+                continue
+            if any(ex in enrichments for ex in exclude_enrich):
+                continue
+            if include_filter and not all(req in filters for req in include_filter):
+                continue
+            if include_enrich and not all(req in enrichments for req in include_enrich):
+                continue
+
+            candidates.append((fname, len(filters), len(enrichments)))
+
+        if not candidates:
             return cls.DATA_RAW
 
-        return os.path.join(cls.DATA_NEW_DIR, best_file)
+        # Priorité : nb de filtres puis nb d'enrichissements
+        candidates.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        best_file = candidates[0][0]
+        return os.path.join(cls.DATA_PROCESSED_DIR, best_file)
     
     
     @staticmethod
@@ -141,40 +175,80 @@ class Utils:
     @staticmethod
     def name_file(base: str, kind: str, tags: Sequence[str], ext: str = ".csv") -> str:
         """
-        Build a file name with a single 'enriched' or 'filtered' marker and ordered tags.
-        - base: base path or file name (with or without extension)
-        - kind: 'enriched' or 'filtered'
-        - tags: sequence like ['elevation', 'taxa'] or ['position', 'grade']
-        Example: Utils.name_file("data/observations_swiss.csv", "enriched", ["elevation", "taxa"])
-                 -> data/observations_swiss_enriched_elevation_taxa.csv
+        Construit un nom conforme a la nomenclature
+        <nom>_filtered_<[filters]>_enriched_<[enrichments]>.csv en preservant
+        l'ordre existant et en ajoutant uniquement les tags manquants.
         """
         kind_l = kind.lower().strip()
         if kind_l not in {"enriched", "filtered"}:
             raise ValueError("kind must be 'enriched' or 'filtered'")
 
-        # Normalize tags (lower, unique order, non-empty)
-        seen = set()
-        norm_tags = []
-        for t in tags:
-            if not t:
-                continue
-            tl = str(t).lower().strip()
-            if tl and tl not in seen:
-                seen.add(tl)
-                norm_tags.append(tl)
+        def _normalize(seq: Sequence[str]) -> list[str]:
+            seen: set[str] = set()
+            out: list[str] = []
+            for val in seq:
+                if not val:
+                    continue
+                v = str(val).lower().strip()
+                if v and v not in seen:
+                    seen.add(v)
+                    out.append(v)
+            return out
+
+        def _merge(base_list: list[str], to_add: list[str]) -> list[str]:
+            merged = list(base_list)
+            for item in to_add:
+                if item not in merged:
+                    merged.append(item)
+            return merged
+
+        norm_tags = _normalize(tags)
 
         base_root, base_ext = os.path.splitext(base)
         use_ext = base_ext or ext
 
-        # Split dir and file name to avoid mangling directories
         dir_path, fname_root = os.path.split(base_root)
-        fname_parts = [p for p in fname_root.split("_") if p]
+        parts = [p for p in fname_root.split("_") if p]
 
-        # Remove existing occurrences of kind/tags to avoid duplicates
-        skip = {kind_l, *norm_tags}
-        cleaned_parts = [p for p in fname_parts if p.lower() not in skip]
+        prefix: list[str] = []
+        filters: list[str] = []
+        enrichments: list[str] = []
 
-        final_parts = cleaned_parts + [kind_l] + norm_tags
+        i = 0
+        while i < len(parts):
+            token = parts[i].lower()
+            if token == "filtered":
+                i += 1
+                while i < len(parts) and parts[i].lower() not in {"filtered", "enriched"}:
+                    filters.append(parts[i].lower())
+                    i += 1
+                continue
+            if token == "enriched":
+                i += 1
+                while i < len(parts) and parts[i].lower() not in {"filtered", "enriched"}:
+                    enrichments.append(parts[i].lower())
+                    i += 1
+                continue
+            prefix.append(parts[i])
+            i += 1
+
+        if kind_l == "filtered":
+            filters = _merge(filters, norm_tags)
+        else:
+            enrichments = _merge(enrichments, norm_tags)
+
+        # Re-dedupe existing sections to avoid weird duplicates from multiple markers
+        filters = _normalize(filters)
+        enrichments = _normalize(enrichments)
+
+        final_parts: list[str] = []
+        final_parts.extend(prefix)
+        if filters:
+            final_parts.append("filtered")
+            final_parts.extend(filters)
+        if enrichments:
+            final_parts.append("enriched")
+            final_parts.extend(enrichments)
+
         final_name = "_".join(final_parts) + use_ext
-
         return os.path.join(dir_path, final_name) if dir_path else final_name

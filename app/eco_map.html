@@ -48,10 +48,23 @@
 <body>
   <div id="map"></div>
   <div class="controls">
-    <label>Année</label>
+    <label>Jeu de clusters</label>
+    <div class="row">
+      <select id="clusterSelect" style="min-width:240px;"></select>
+    </div>
+    <label style="margin-top:8px;">Année</label>
     <div class="row">
       <input id="yearRange" type="range" min="0" max="0" value="0" step="1" disabled />
       <span id="yearValue" class="value">-</span>
+    </div>
+    <label style="margin-top:8px;">Quality grade</label>
+    <div class="row">
+      <select id="qualitySelect" style="min-width:150px;">
+        <option value="">Toutes</option>
+        <option value="casual">Casual</option>
+        <option value="research">Research</option>
+        <option value="needs_id">Needs ID</option>
+      </select>
     </div>
     <label class="row" style="margin-top:6px;">
       <input id="allYears" type="checkbox" checked />
@@ -64,9 +77,14 @@
   </div>
 
   <script>
-    const GEOJSON_URL = 'data/ecosystemes_4326.geojson';
-    const OBS_CSV_URL = 'data/clusters/observations_with_clusters.csv';
+    const BASE_PATH = window.location.pathname.replace(/[^/]*$/, ""); // ex: "/app/" ou "/"
+    const CLUSTERS_DIR = `${BASE_PATH}data/clusters/`;
+    const CLUSTERS_DIR_ALT = `${BASE_PATH}../data/clusters/`; // fallback si eco_map.html est servi depuis /app/
+    let MANIFEST_URL = `${CLUSTERS_DIR}manifest.json`;
     const YEAR_FIELD = 'cluster_year';
+    const QUALITY_GRADES = ["casual", "research", "needs_id"];
+    const FILTER_ABBR = { p: "position", e: "elevation", g: "grade", r: "research", c: "casual", n: "needs_id" };
+    const ENRICH_ABBR = { e: "elevation", t: "taxa" };
 
     const map = L.map('map').setView([46.8, 8.2], 8);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -77,11 +95,24 @@
     const yearRangeEl = document.getElementById("yearRange");
     const yearValueEl = document.getElementById("yearValue");
     const allYearsEl = document.getElementById("allYears");
+    const qualitySelectEl = document.getElementById("qualitySelect");
+    const clusterSelectEl = document.getElementById("clusterSelect");
 
-    const taxonsByYearCluster = {}; // {year: {clusterId: {label: count}}}
+    const taxonsByYearCluster = {}; // {gradeKey: {year: {clusterId: {label: count}}}}
     const yearLayers = {}; // {year: L.GeoJSON}
+    const availableGrades = new Set();
     let boundsAll = null;
     let yearList = [];
+
+    function getSelectedGrade() {
+      const v = qualitySelectEl.value;
+      return v ? v : null;
+    }
+
+    function getCountsFor(year, clusterId) {
+      const grade = getSelectedGrade() || "all";
+      return ((taxonsByYearCluster[grade] || {})[year] || {})[clusterId];
+    }
 
     function setInfo(clusterId, counts, year) {
       if (!clusterId) {
@@ -113,7 +144,92 @@
       yearValueEl.textContent = isAll ? "Toutes" : `${value}`;
     }
 
-    function refreshLayers() {
+    function decodeClustersFilename(fname) {
+      const segments = fname.split(/[\\/]/).filter(Boolean);
+      const folder = segments.length > 1 ? segments.slice(0, -1).join("/") : "";
+      const base = (segments.pop() || "").replace(/\.csv$/i, "");
+      const parts = base.split("_").filter(Boolean);
+      const idxClusters = parts.indexOf("clusters");
+      const info = { file: fname, folder, filters: [], enrichments: [] };
+      if (idxClusters >= 0) {
+        const tail = parts.slice(idxClusters + 1);
+        const idxFiltered = tail.indexOf("filtered");
+        if (idxFiltered >= 0) {
+          const afterF = tail.slice(idxFiltered + 1);
+          const idxEnriched = afterF.indexOf("enriched");
+          if (idxEnriched >= 0) {
+            info.filters = afterF.slice(0, idxEnriched);
+            info.enrichments = afterF.slice(idxEnriched + 1);
+          } else {
+            info.filters = afterF;
+          }
+        }
+        if (tail.includes("enriched") && info.enrichments.length === 0) {
+          const idxE = tail.indexOf("enriched");
+          info.enrichments = tail.slice(idxE + 1);
+        }
+      }
+      return info;
+    }
+
+    function labelFromInfo(info) {
+      const expand = (arr, dict) => arr.map(a => dict[a] || a);
+      const fTxt = info.filters.length ? expand(info.filters, FILTER_ABBR).join(", ") : "aucun";
+      const eTxt = info.enrichments.length ? expand(info.enrichments, ENRICH_ABBR).join(", ") : "aucun";
+      const prefix = info.folder ? `${info.folder} | ` : "";
+      return `${prefix}Filtres: ${fTxt} | Enrichissements: ${eTxt}`;
+    }
+
+    function populateClusterSelect(files) {
+      clusterSelectEl.innerHTML = "";
+      files.forEach(f => {
+        const info = decodeClustersFilename(f);
+        const opt = document.createElement("option");
+        opt.value = f;
+        opt.textContent = labelFromInfo(info);
+        clusterSelectEl.appendChild(opt);
+      });
+    }
+
+    function clusterFileToUrl(file) {
+      if (!file) return null;
+      if (/^https?:\/\//i.test(file) || file.startsWith("/")) return file;
+      if (file.startsWith(CLUSTERS_DIR) || file.startsWith(CLUSTERS_DIR_ALT)) return file;
+      const baseDir = MANIFEST_URL.includes(CLUSTERS_DIR_ALT) ? CLUSTERS_DIR_ALT : CLUSTERS_DIR;
+      return `${baseDir}${file}`;
+    }
+
+    async function loadClustersList() {
+      let fromManifest = [];
+      const candidates = [MANIFEST_URL, `${CLUSTERS_DIR_ALT}manifest.json`];
+      for (const url of candidates) {
+        try {
+          const resp = await fetch(url, { cache: "no-cache" });
+          if (!resp.ok) throw new Error("manifest not found");
+          const arr = await resp.json();
+          fromManifest = Array.isArray(arr) ? arr.filter(f => typeof f === "string" && f.toLowerCase().endsWith(".csv")) : [];
+          MANIFEST_URL = url; // memorise le chemin qui marche
+          if (fromManifest.length) break;
+        } catch (e) {
+          continue;
+        }
+      }
+      return fromManifest;
+    }
+
+    function populateQualitySelect() {
+      QUALITY_GRADES.forEach(grade => {
+        const opt = qualitySelectEl.querySelector(`option[value="${grade}"]`);
+        if (!opt) return;
+        opt.disabled = !availableGrades.has(grade);
+      });
+      if (qualitySelectEl.value && qualitySelectEl.querySelector(`option[value="${qualitySelectEl.value}"]`)?.disabled) {
+        qualitySelectEl.value = "";
+      }
+    }
+
+    function refreshLayers(options = {}) {
+      const { fit = false } = options;
       const showAll = allYearsEl.checked;
       const targetYear = parseInt(yearRangeEl.value, 10);
       Object.values(yearLayers).forEach(layer => {
@@ -130,96 +246,195 @@
         }
       }
 
-      if (boundsAll && showAll) {
-        map.fitBounds(boundsAll, { maxZoom: 12 });
-      } else if (!showAll && yearLayers[targetYear]) {
-        const b = yearLayers[targetYear].getBounds();
-        if (b && b.isValid()) map.fitBounds(b, { maxZoom: 12 });
+      if (fit) {
+        if (boundsAll && showAll) {
+          map.fitBounds(boundsAll, { maxZoom: 12 });
+        } else if (!showAll && yearLayers[targetYear]) {
+          const b = yearLayers[targetYear].getBounds();
+          if (b && b.isValid()) map.fitBounds(b, { maxZoom: 12 });
+        }
       }
     }
 
-    Papa.parse(OBS_CSV_URL, {
-      download: true,
-      header: true,
-      dynamicTyping: true,
-      complete: function(results) {
-        results.data.forEach(row => {
-          const cid = row['cluster_id'];
-          const year = row[YEAR_FIELD];
-          if (cid === undefined || cid === null || cid === -1) return;
-          if (year === undefined || year === null || year === "") return;
+    function resetData() {
+      Object.keys(taxonsByYearCluster).forEach(k => delete taxonsByYearCluster[k]);
+      Object.values(yearLayers).forEach(layer => {
+        if (map.hasLayer(layer)) map.removeLayer(layer);
+      });
+      Object.keys(yearLayers).forEach(k => delete yearLayers[k]);
+      availableGrades.clear();
+      yearList = [];
+      boundsAll = null;
+      geojsonData = null;
+      yearRangeEl.disabled = true;
+      yearRangeEl.value = 0;
+      yearValueEl.textContent = "-";
+      setInfo(null);
+    }
 
-          const common = row['common_name'];
-          const group = row['group'];
-          const iconic = row['iconic_taxon_name'];
+    function deriveGeojsonCandidates(csvUrl) {
+      if (!csvUrl) return [];
+      const base = csvUrl.replace(/\.csv$/i, "");
+      return [
+        `${base}_4326.geojson`,
+        `${base}.geojson`
+      ];
+    }
 
-          let label = common || iconic || "inconnu";
-          if (group) {
-            label = `${label} (${group})`;
-          }
+    function loadClusters(csvUrl, geojsonCandidates) {
+      resetData();
+      if (!csvUrl) return;
 
-          if (!taxonsByYearCluster[year]) taxonsByYearCluster[year] = {};
-          if (!taxonsByYearCluster[year][cid]) taxonsByYearCluster[year][cid] = {};
-          taxonsByYearCluster[year][cid][label] = (taxonsByYearCluster[year][cid][label] || 0) + 1;
-        });
-        loadGeojson();
+      Papa.parse(csvUrl, {
+        download: true,
+        header: true,
+        dynamicTyping: true,
+        complete: function(results) {
+          const ensureBucket = (gradeKey, year, cid) => {
+            if (!taxonsByYearCluster[gradeKey]) taxonsByYearCluster[gradeKey] = {};
+            if (!taxonsByYearCluster[gradeKey][year]) taxonsByYearCluster[gradeKey][year] = {};
+            if (!taxonsByYearCluster[gradeKey][year][cid]) taxonsByYearCluster[gradeKey][year][cid] = {};
+            return taxonsByYearCluster[gradeKey][year][cid];
+          };
+
+          results.data.forEach(row => {
+            const cid = row['cluster_id'];
+            const year = row[YEAR_FIELD];
+            if (cid === undefined || cid === null || cid === -1) return;
+            if (year === undefined || year === null || year === "") return;
+
+            const gradeRaw = (row['quality_grade'] || "").toString().toLowerCase();
+            const grade = QUALITY_GRADES.includes(gradeRaw) ? gradeRaw : null;
+            if (grade) availableGrades.add(grade);
+
+            const common = row['common_name'];
+            const group = row['group'];
+            const iconic = row['iconic_taxon_name'];
+
+            let label = common || iconic || "inconnu";
+            if (group) {
+              label = `${label} (${group})`;
+            }
+
+            const buckets = [
+              ensureBucket("all", year, cid),
+              ...(grade ? [ensureBucket(grade, year, cid)] : [])
+            ];
+            buckets.forEach(b => {
+              b[label] = (b[label] || 0) + 1;
+            });
+          });
+          populateQualitySelect();
+          loadGeojson(geojsonCandidates);
+        }
+      });
+    }
+
+    function rebuildYearLayers(fit = false) {
+      Object.values(yearLayers).forEach(layer => {
+        if (map.hasLayer(layer)) map.removeLayer(layer);
+      });
+      Object.keys(yearLayers).forEach(k => delete yearLayers[k]);
+      boundsAll = null;
+
+      if (!geojsonData) return;
+      yearList = Array.from(new Set((geojsonData.features || []).map(f => f.properties.year))).sort((a,b)=>a-b);
+      if (yearList.length === 0) {
+        console.warn("Aucune année trouvée dans le geojson.");
+        return;
       }
+      updateYearControls(yearList[0], yearList[yearList.length - 1]);
+
+      yearList.forEach(year => {
+        const layer = L.geoJSON(geojsonData, {
+          filter: f => {
+            if (f.properties.year !== year) return false;
+            const cid = f.properties.cluster_id;
+            const counts = getCountsFor(year, cid);
+            return counts && Object.keys(counts).length > 0;
+          },
+          style: f => {
+            const cid = f.properties.cluster_id;
+            const hue = (cid * 1337) % 360;
+            return {
+              color: `hsl(${hue}, 70%, 35%)`,
+              weight: 1,
+              fillColor: `hsl(${hue}, 80%, 65%)`,
+              fillOpacity: 0.4
+            };
+          },
+          onEachFeature: function(feature, layer) {
+            const cid = feature.properties.cluster_id;
+            layer.on('mouseover', function() {
+              const counts = getCountsFor(year, cid);
+              setInfo(cid, counts, year);
+              layer.setStyle({weight: 3});
+            });
+            layer.on('mouseout', function() {
+              setInfo(null);
+              layer.setStyle({weight: 1});
+            });
+          }
+        });
+        yearLayers[year] = layer;
+      });
+
+      const groupAll = L.featureGroup(Object.values(yearLayers));
+      boundsAll = groupAll.getBounds();
+
+      refreshLayers({ fit });
+    }
+
+    function loadGeojson(candidates) {
+      const urls = Array.isArray(candidates) && candidates.length ? candidates : [];
+      if (!urls.length) return;
+      const tryNext = (idx) => {
+        if (idx >= urls.length) return;
+        fetch(urls[idx])
+          .then(r => {
+            if (!r.ok) throw new Error("fetch failed");
+            return r.json();
+          })
+          .then(data => {
+            geojsonData = data;
+            rebuildYearLayers(true);
+          })
+          .catch(() => tryNext(idx + 1));
+      };
+      tryNext(0);
+    }
+
+    // --- init ---
+    yearRangeEl.addEventListener("input", () => {
+      allYearsEl.checked = false;
+      refreshLayers();
+    });
+    allYearsEl.addEventListener("change", () => {
+      refreshLayers();
+    });
+    qualitySelectEl.addEventListener("change", () => {
+      setInfo(null);
+      rebuildYearLayers();
     });
 
-    function loadGeojson() {
-      fetch(GEOJSON_URL)
-        .then(r => r.json())
-        .then(data => {
-          yearList = Array.from(new Set((data.features || []).map(f => f.properties.year))).sort((a,b)=>a-b);
-          if (yearList.length === 0) {
-            console.warn("Aucune année trouvée dans le geojson.");
-            return;
-          }
-          updateYearControls(yearList[0], yearList[yearList.length - 1]);
+    (async function init() {
+      const files = await loadClustersList();
+      populateClusterSelect(files);
 
-          yearList.forEach(year => {
-            const layer = L.geoJSON(data, {
-              filter: f => f.properties.year === year,
-              style: f => {
-                const cid = f.properties.cluster_id;
-                const hue = (cid * 1337) % 360;
-                return {
-                  color: `hsl(${hue}, 70%, 35%)`,
-                  weight: 1,
-                  fillColor: `hsl(${hue}, 80%, 65%)`,
-                  fillOpacity: 0.4
-                };
-              },
-              onEachFeature: function(feature, layer) {
-                const cid = feature.properties.cluster_id;
-                layer.on('mouseover', function() {
-                  const counts = (taxonsByYearCluster[year] || {})[cid];
-                  setInfo(cid, counts, year);
-                  layer.setStyle({weight: 3});
-                });
-                layer.on('mouseout', function() {
-                  setInfo(null);
-                  layer.setStyle({weight: 1});
-                });
-              }
-            });
-            yearLayers[year] = layer;
-          });
+      // placeholder option
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = files.length ? "Choisir un jeu de clusters..." : "Aucun cluster disponible";
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      clusterSelectEl.insertBefore(placeholder, clusterSelectEl.firstChild);
 
-          const groupAll = L.featureGroup(Object.values(yearLayers));
-          boundsAll = groupAll.getBounds();
-
-          refreshLayers();
-
-          yearRangeEl.addEventListener("input", () => {
-            allYearsEl.checked = false;
-            refreshLayers();
-          });
-          allYearsEl.addEventListener("change", () => {
-            refreshLayers();
-          });
-        });
-    }
+      clusterSelectEl.addEventListener("change", () => {
+        const chosen = clusterSelectEl.value;
+        const url = clusterFileToUrl(chosen);
+        loadClusters(url, deriveGeojsonCandidates(url));
+      });
+    })();
   </script>
 </body>
 </html>

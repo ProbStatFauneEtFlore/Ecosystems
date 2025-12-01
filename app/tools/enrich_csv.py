@@ -26,6 +26,7 @@ from tools.utils import Utils
 
 # ----------------------------- TAXA MODE ---------------------------------
 API_URL = "https://api.inaturalist.org/v1/taxa"
+TAXA_CACHE_FILE = os.path.join(Utils.DATA_DIR, "taxa_infos.json")
 MAX_IDS_PER_CALL = 200  # iNat allows up to ~200 ids per request
 ICONIC_ANIMALS = {
     "mammalia",
@@ -40,11 +41,25 @@ ICONIC_ANIMALS = {
 
 
 def fetch_taxa(ids: Iterable[int], delay: float = 0.3, retries: int = 3) -> Dict[int, Dict[str, Any]]:
-    """Fetch taxon metadata for a list of numeric taxon IDs."""
-    results = {}
-    ids = list(ids)
+    """
+    Fetch taxon metadata for a list of numeric taxon IDs.
+    Utilise un cache local (taxa_infos.json) pour éviter les téléchargements répétés.
+    """
+    ids = [int(i) for i in ids]
+    cache: Dict[int, Dict[str, Any]] = {}
+    # Charger le cache existant s'il est présent
+    try:
+        with open(TAXA_CACHE_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+            if isinstance(raw, dict):
+                cache = {int(k): v for k, v in raw.items()}
+    except FileNotFoundError:
+        cache = {}
 
-    for batch in Utils.chunks(ids, MAX_IDS_PER_CALL):
+    to_fetch = [tid for tid in ids if tid not in cache]
+    new_entries: Dict[int, Dict[str, Any]] = {}
+
+    for batch in Utils.chunks(to_fetch, MAX_IDS_PER_CALL):
         params = "&".join(f"id={tid}" for tid in batch)
         url = f"{API_URL}?{params}&per_page={MAX_IDS_PER_CALL}"
         for attempt in range(1, retries + 1):
@@ -55,7 +70,7 @@ def fetch_taxa(ids: Iterable[int], delay: float = 0.3, retries: int = 3) -> Dict
                     tid = taxon.get("id")
                     if tid is None:
                         continue
-                    results[int(tid)] = {
+                    new_entries[int(tid)] = {
                         "iconic_taxon_name": taxon.get("iconic_taxon_name"),
                         "common_name": taxon.get("preferred_common_name"),
                     }
@@ -71,7 +86,14 @@ def fetch_taxa(ids: Iterable[int], delay: float = 0.3, retries: int = 3) -> Dict
                     continue
                 raise
         time.sleep(delay)
-    return results
+
+    if new_entries:
+        cache.update(new_entries)
+        os.makedirs(os.path.dirname(TAXA_CACHE_FILE) or ".", exist_ok=True)
+        with open(TAXA_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+
+    return {tid: cache[tid] for tid in ids if tid in cache}
 
 
 def derive_group(meta: Dict[str, Any]) -> str:
@@ -85,10 +107,7 @@ def derive_group(meta: Dict[str, Any]) -> str:
 
 
 def run_taxa_mode(args: argparse.Namespace) -> str:
-    out_path = args.out 
-    inp = args.inp
-    base = os.path.splitext(os.path.basename(inp))[0] 
-    suffix = "_enriched_taxa.csv" if "enriched" not in base else "_taxa.csv"
+    inp = os.path.abspath(args.inp)
     if not args.out:
         raise ValueError("--out est requis pour le mode taxa.")
     out_path = os.path.abspath(args.out)
@@ -181,8 +200,8 @@ def run_elevation_mode(args: argparse.Namespace) -> str:
 
     global _GDAL
     _GDAL = gdal
+    inp = args.inp
 
-    inp = args.inp or Utils.get_data_most_filtered_path(["elevation"])
     if args.out is None:
         in_file_name, ext = os.path.splitext(os.path.basename(inp))
         args.out = Utils.name_file(inp, "enriched", ["elevation"])
@@ -297,9 +316,13 @@ def build_parser():
 
     p_taxa = subparsers.add_parser("taxa", help="Enrichir avec les infos iNaturalist (iconic/common/group).")
     p_taxa.add_argument("--in", dest="inp", default=None, help="Input CSV avec colonne 'taxon_id'.")
-    p_taxa.add_argument("--out", dest="out", required=True, help="CSV de sortie.")
+    p_taxa.add_argument("--out", dest="out", default=None, help="CSV de sortie.")
     p_taxa.add_argument("--batch-size", type=int, default=MAX_IDS_PER_CALL, help="IDs par appel API (<=200).")
     p_taxa.add_argument("--delay", type=float, default=0.3, help="Pause entre appels API.")
+    p_taxa.add_argument("--exclude-filter", action="append", nargs="+", default=[], help="Exclure certains filtres")
+    p_taxa.add_argument("--include-filter", action="append", nargs="+", default=[], help="Inclure certains filtres")
+    p_taxa.add_argument("--exclude-enrich", action="append", nargs="+", default=[], help="Exclure certains enrichissements")
+    p_taxa.add_argument("--include-enrich", action="append", nargs="+", default=[], help="Inclure seulement certains enrichissements")
 
     p_elev = subparsers.add_parser("elevation", help="Enrichir avec l'altitude swissALTI3D.")
     p_elev.add_argument("--in", dest="inp", default=None, help="Input CSV.")
@@ -308,6 +331,10 @@ def build_parser():
     p_elev.add_argument("--lon-field", dest="lon_field", help="Nom de la colonne longitude.")
     p_elev.add_argument("--lat-field", dest="lat_field", help="Nom de la colonne latitude.")
     p_elev.add_argument("--workers", type=int, default=0, help="Nb de processus (0 = nb CPU).")
+    p_elev.add_argument("--exclude-filter", action="append", nargs="+", default=[], help="Exclure certains filtres")
+    p_elev.add_argument("--include-filter", action="append", nargs="+", default=[], help="Inclure certains filtres")
+    p_elev.add_argument("--exclude-enrich", action="append", nargs="+", default=[], help="Exclure certains enrichissements")
+    p_elev.add_argument("--include-enrich", action="append", nargs="+", default=[], help="Inclure seulement certains enrichissements")
 
     return parser
 
@@ -316,11 +343,30 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
+    def _flatten(val):
+        out = []
+        for item in val:
+            if isinstance(item, (list, tuple)):
+                out.extend(item)
+            else:
+                out.append(item)
+        return out
+
+    args.exclude_filter = _flatten(args.exclude_filter)
+    args.include_filter = _flatten(args.include_filter)
+    args.exclude_enrich = _flatten(args.exclude_enrich)
+    args.include_enrich = _flatten(args.include_enrich)
+
     if args.inp is None:
-        args.inp = Utils.get_data_most_filtered_path([args.mode])
+        args.inp = Utils.get_data_most_filtered_path(exclude_enrich=args.exclude_enrich + [args.mode],
+                                                     include_enrich=args.include_enrich,
+                                                     exclude_filter=args.exclude_filter,
+                                                     include_filter=args.include_filter,
+                                                    )
 
     if args.out is None:
         args.out = Utils.name_file(args.inp, "enriched", [args.mode])
+        args.out = os.path.join(Utils.DATA_PROCESSED_DIR, os.path.basename(args.out))
 
     try:
         if args.mode == "taxa":
