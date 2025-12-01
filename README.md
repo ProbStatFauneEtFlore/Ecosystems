@@ -107,7 +107,7 @@ In the `gdal_tools` container, from `app/`, use the single entry point `eco_app.
 
    - `enrich_csv elevation`
       ```bash
-      foo@bar: python3 eco_app.py enrich_csv  
+      python3 eco_app.py enrich_csv  
             elevation                                 # enrichment mode
             --in <input_csv>                          # optional, prefer default naming
             --out <output_csv>                        # optional, prefer default naming
